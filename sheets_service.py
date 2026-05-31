@@ -1,9 +1,11 @@
 """Google Sheets operations for Solstice Pilates contacts/CRM."""
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from config import CREDENTIALS_FILE, SPREADSHEET_ID
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -65,7 +67,7 @@ def create_contact(name: str, phone: str) -> dict:
     if existing:
         return {"success": False, "message": f"Contact already exists: {existing['name']}"}
 
-    today = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+    today = datetime.now(IST).strftime("%Y-%m-%d %I:%M %p")
     _sheets.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
         range=f"{SHEET_RANGE}!A:F",
@@ -91,7 +93,7 @@ def log_call(phone: str, summary: str) -> dict:
         return {"success": False, "message": "Contact not found. Create contact first."}
 
     row = contact["row_number"]
-    today = datetime.now().strftime("%Y-%m-%d %I:%M %p")
+    today = datetime.now(IST).strftime("%Y-%m-%d %I:%M %p")
 
     # Append to existing call log
     existing_log = contact.get("call_log", "")
