@@ -299,12 +299,12 @@ HTML = """
             document.getElementById('voice-area').style.display = mode === 'voice' ? 'flex' : 'none';
             messagesDiv.innerHTML = '';
             if (mode === 'text') {
-                addMessage('Hi! Thanks for calling Solstice Pilates. How can I help you today?', 'agent');
+                addMessage('Hi! Welcome to Solstice Pilates. How can I help you today?', 'agent');
                 input.focus();
             }
         }
 
-        addMessage('Hi! Thanks for calling Solstice Pilates. How can I help you today?', 'agent');
+        addMessage('Hi! Welcome to Solstice Pilates. How can I help you today?', 'agent');
 
         let vapi = null;
         let callActive = false;

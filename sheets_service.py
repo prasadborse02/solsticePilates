@@ -53,8 +53,12 @@ def find_contact(phone: str) -> dict | None:
 
 
 def create_contact(name: str, phone: str) -> dict:
-    """Create a new contact in the sheet.
+    """Create a new contact in the sheet."""
+    invalid = {"unknown", "n/a", "none", "john doe", "jane doe", "placeholder", ""}
+    if name.lower().strip() in invalid or phone.lower().strip() in invalid:
+        return {"success": False, "message": "Please ask the caller for their real name and phone number first."}
 
+    """
     Args:
         name: Caller's name.
         phone: Caller's phone number.

@@ -1,186 +1,48 @@
-"""Solstice Pilates AI Receptionist — LLM Agent with tool calling."""
+"""Solstice Pilates AI Receptionist — LLM Agent with tool calling (Groq)."""
 
 import json
 import time
 from datetime import datetime, timedelta
-from google import genai
-from google.genai import types
+from groq import Groq
 
 from config import (
-    GEMINI_API_KEY, GEMINI_MODEL,
+    GROQ_API_KEY, GROQ_MODEL,
     STUDIO_NAME, STUDIO_HOURS, STUDIO_ADDRESS, STUDIO_PHONE,
     CLASS_TYPES, PRICING, TIMEZONE,
 )
 import calendar_service
 import sheets_service
 
-# --- Gemini Client ---
-client = genai.Client(api_key=GEMINI_API_KEY)
+# --- Groq Client ---
+client = Groq(api_key=GROQ_API_KEY)
 
 # --- System Prompt ---
 TODAY = datetime.now().strftime("%A, %B %d, %Y")
 TOMORROW = (datetime.now() + timedelta(days=1)).strftime("%A, %B %d, %Y")
 
-SYSTEM_PROMPT = f"""You are the friendly AI receptionist for {STUDIO_NAME}, a small pilates studio.
+SYSTEM_PROMPT = f"""You are the receptionist for {STUDIO_NAME}. Be warm, concise. Today={datetime.now().strftime("%Y-%m-%d")} ({datetime.now().strftime("%A")}). Tomorrow={(datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")}.
 
-Today is {TODAY}. The current timezone is {TIMEZONE}.
+Studio: {STUDIO_ADDRESS} | {STUDIO_PHONE} | {STUDIO_HOURS}
+Pricing: Single $35, 5-pack $150, 10-pack $280, Unlimited $250/mo, Drop-in $40
+Classes: Reformer (10AM/6PM/7PM, 8 spots), Morning Mat Pilates (7AM, 12 spots), Tower Pilates (4PM, 6 spots)
 
-## Studio Info
-- Address: {STUDIO_ADDRESS}
-- Phone: {STUDIO_PHONE}
-- Hours: {STUDIO_HOURS}
+CRITICAL RULES:
+1. NEVER call book_class, create_contact, or log_call until the caller has told you their real name and phone number. If you don't have them, ASK FIRST. Using "unknown", "N/A", or any placeholder is FORBIDDEN.
+2. ALWAYS use get_classes_on_date before answering availability. Never guess.
+3. If class full, suggest alternatives same day.
+4. Cancel by phone number only.
+5. Handoff to human: billing disputes, refunds, birthday parties, medical concerns. Before handing off, ask for name and phone so the team can call back.
+6. Keep responses to 1-2 sentences."""
 
-## Classes Offered
-{json.dumps({k: {"name": v["name"], "description": v["description"], "duration": f"{v['duration_mins']} min"} for k, v in CLASS_TYPES.items()}, indent=2)}
-
-## Pricing
-{json.dumps(PRICING, indent=2)}
-
-## Your Behavior
-- Be warm, friendly, and concise — like a real receptionist, not a robot.
-- Keep responses short. Don't over-explain.
-- When someone asks about a class, ALWAYS check the calendar first. Never guess availability.
-- When booking, you MUST collect the caller's name and phone number before confirming.
-- When a class is full, proactively suggest alternatives on the same day.
-- After completing a booking or resolving a query, ask "Anything else?" to keep the conversation going.
-- Always confirm booking details back to the caller before finalizing.
-- When cancelling, always look up by phone number.
-
-## What You Handle
-- Booking a class
-- Changing or cancelling a booking
-- Checking class availability
-- Questions about pricing, hours, class types, location
-- "I'm running late" — acknowledge it warmly, no action needed
-- General studio questions
-
-## What You Hand Off to a Human
-For these, say something like "Let me get a manager on the line for you" or "I'll have someone from the team call you back about that":
-- Billing complaints or charge disputes
-- Refund requests
-- Birthday party or private event inquiries
-- Medical or injury concerns
-- Anything you're unsure about
-
-## Tool Usage
-- Use get_classes_on_date to check availability. Pass dates as YYYY-MM-DD.
-- Use find_alternative_classes when a class is full.
-- Use book_class to confirm a booking (requires event_id, name, phone).
-- Use cancel_booking to cancel (requires event_id and phone).
-- Use find_contact to look up returning callers.
-- Use create_contact to save new callers.
-- Use log_call at the END of every conversation to record what happened.
-
-## Date Handling
-- "today" = {datetime.now().strftime("%Y-%m-%d")}
-- "tomorrow" = {(datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")}
-- For other days, calculate from today. Today is {datetime.now().strftime("%A")}.
-"""
-
-# --- Tool Definitions ---
+# --- Tool Definitions (OpenAI-compatible format) ---
 tools = [
-    types.Tool(function_declarations=[
-        types.FunctionDeclaration(
-            name="get_classes_on_date",
-            description="Get all classes scheduled on a given date with their availability (spots taken, spots left, full or not).",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "date_str": types.Schema(
-                        type="STRING",
-                        description="Date in YYYY-MM-DD format.",
-                    ),
-                },
-                required=["date_str"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="get_class_details",
-            description="Get full details of a specific class including the list of who is booked.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "event_id": types.Schema(
-                        type="STRING",
-                        description="The Google Calendar event ID.",
-                    ),
-                },
-                required=["event_id"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="book_class",
-            description="Book a person into a class. Requires the event ID, the caller's name, and their phone number.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "event_id": types.Schema(type="STRING", description="The Google Calendar event ID."),
-                    "name": types.Schema(type="STRING", description="Caller's full name."),
-                    "phone": types.Schema(type="STRING", description="Caller's phone number."),
-                },
-                required=["event_id", "name", "phone"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="cancel_booking",
-            description="Cancel a booking by phone number.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "event_id": types.Schema(type="STRING", description="The Google Calendar event ID."),
-                    "phone": types.Schema(type="STRING", description="Phone number of the person to remove."),
-                },
-                required=["event_id", "phone"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="find_alternative_classes",
-            description="Find available classes of a given type on a date. Use when the requested class is full.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "class_type": types.Schema(type="STRING", description="Class type, e.g. 'Reformer', 'Mat Pilates', 'Tower'."),
-                    "date_str": types.Schema(type="STRING", description="Date in YYYY-MM-DD format."),
-                },
-                required=["class_type", "date_str"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="find_contact",
-            description="Look up a contact in the system by phone number.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "phone": types.Schema(type="STRING", description="Phone number to search for."),
-                },
-                required=["phone"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="create_contact",
-            description="Create a new contact record for a caller.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "name": types.Schema(type="STRING", description="Caller's name."),
-                    "phone": types.Schema(type="STRING", description="Caller's phone number."),
-                },
-                required=["name", "phone"],
-            ),
-        ),
-        types.FunctionDeclaration(
-            name="log_call",
-            description="Log a summary of the call for a contact. Call this at the end of every conversation.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "phone": types.Schema(type="STRING", description="Caller's phone number."),
-                    "summary": types.Schema(type="STRING", description="Brief summary of what the call was about."),
-                },
-                required=["phone", "summary"],
-            ),
-        ),
-    ])
+    {"type": "function", "function": {"name": "get_classes_on_date", "description": "Get classes with availability on a date.", "parameters": {"type": "object", "properties": {"date_str": {"type": "string", "description": "YYYY-MM-DD"}}, "required": ["date_str"]}}},
+    {"type": "function", "function": {"name": "book_class", "description": "Book a person into a class.", "parameters": {"type": "object", "properties": {"event_id": {"type": "string"}, "name": {"type": "string"}, "phone": {"type": "string"}}, "required": ["event_id", "name", "phone"]}}},
+    {"type": "function", "function": {"name": "cancel_booking", "description": "Cancel a booking by phone.", "parameters": {"type": "object", "properties": {"event_id": {"type": "string"}, "phone": {"type": "string"}}, "required": ["event_id", "phone"]}}},
+    {"type": "function", "function": {"name": "find_alternative_classes", "description": "Find open classes of a type on a date.", "parameters": {"type": "object", "properties": {"class_type": {"type": "string"}, "date_str": {"type": "string"}}, "required": ["class_type", "date_str"]}}},
+    {"type": "function", "function": {"name": "find_contact", "description": "Look up contact by phone.", "parameters": {"type": "object", "properties": {"phone": {"type": "string"}}, "required": ["phone"]}}},
+    {"type": "function", "function": {"name": "create_contact", "description": "Create new contact.", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "phone": {"type": "string"}}, "required": ["name", "phone"]}}},
+    {"type": "function", "function": {"name": "log_call", "description": "Log call summary. Use at end of conversation.", "parameters": {"type": "object", "properties": {"phone": {"type": "string"}, "summary": {"type": "string"}}, "required": ["phone", "summary"]}}},
 ]
 
 # --- Tool Execution ---
@@ -196,111 +58,76 @@ TOOL_FUNCTIONS = {
 }
 
 
-def execute_tool(function_call):
-    """Execute a tool call and return the result."""
-    name = function_call.name
-    args = dict(function_call.args) if function_call.args else {}
-
-    fn = TOOL_FUNCTIONS.get(name)
-    if not fn:
-        return {"error": f"Unknown tool: {name}"}
-
-    try:
-        result = fn(**args)
-        return result
-    except Exception as e:
-        return {"error": str(e)}
-
-
 class ReceptionistAgent:
     """Conversational agent that manages a multi-turn chat with tool calling."""
 
     def __init__(self):
-        self.history = []
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     def chat(self, user_message: str) -> str:
-        """Send a message and get a response, handling any tool calls.
+        """Send a message and get a response, handling any tool calls."""
+        self.messages.append({"role": "user", "content": user_message})
 
-        Args:
-            user_message: The caller's message.
-
-        Returns:
-            The agent's text response.
-        """
-        self.history.append(types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=user_message)],
-        ))
-
-        # Loop: LLM may make multiple tool calls before responding with text
         while True:
             for attempt in range(3):
                 try:
-                    response = client.models.generate_content(
-                        model=GEMINI_MODEL,
-                        contents=self.history,
-                        config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_PROMPT,
-                            tools=tools,
-                            temperature=0.3,
-                        ),
+                    response = client.chat.completions.create(
+                        model=GROQ_MODEL,
+                        messages=self.messages,
+                        tools=tools,
+                        tool_choice="auto",
+                        temperature=0.3,
                     )
                     break
                 except Exception as e:
                     err = str(e)
-                    if attempt < 2 and ("503" in err or "429" in err):
-                        wait = 2 ** attempt  # 1s, 2s
+                    if attempt < 2 and ("429" in err or "503" in err):
+                        wait = 2 ** attempt
                         print(f"  [retry] {err[:80]}... waiting {wait}s")
                         time.sleep(wait)
                         continue
                     raise
 
-            # Check if the response has function calls
-            has_function_call = False
-            function_parts = []
-            text_parts = []
+            choice = response.choices[0]
 
-            for candidate in response.candidates:
-                for part in candidate.content.parts:
-                    if part.function_call:
-                        has_function_call = True
-                        function_parts.append(part)
-                    if part.text:
-                        text_parts.append(part.text)
-
-            if not has_function_call:
-                # No tool calls — just a text response
-                assistant_text = response.candidates[0].content.parts[0].text
-                self.history.append(types.Content(
-                    role="model",
-                    parts=[types.Part.from_text(text=assistant_text)],
-                ))
+            if not choice.message.tool_calls:
+                assistant_text = choice.message.content or ""
+                self.messages.append({"role": "assistant", "content": assistant_text})
                 return assistant_text
 
-            # Execute each function call and collect results
-            self.history.append(response.candidates[0].content)
+            # Process tool calls
+            tool_calls_msg = {"role": "assistant", "content": None, "tool_calls": [
+                {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in choice.message.tool_calls
+            ]}
+            self.messages.append(tool_calls_msg)
 
-            result_parts = []
-            for part in function_parts:
-                fc = part.function_call
-                print(f"  [tool] {fc.name}({dict(fc.args) if fc.args else {}})")
-                result = execute_tool(fc)
-                result_parts.append(types.Part.from_function_response(
-                    name=fc.name,
-                    response={"result": result},
-                ))
+            for tool_call in choice.message.tool_calls:
+                fn_name = tool_call.function.name
+                fn_args = json.loads(tool_call.function.arguments)
 
-            self.history.append(types.Content(
-                role="user",
-                parts=result_parts,
-            ))
-            # Loop continues — LLM will process the tool results
+                print(f"  [tool] {fn_name}({fn_args})")
+
+                fn = TOOL_FUNCTIONS.get(fn_name)
+                if fn:
+                    try:
+                        result = fn(**fn_args)
+                    except Exception as e:
+                        result = {"error": str(e)}
+                else:
+                    result = {"error": f"Unknown tool: {fn_name}"}
+
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(result),
+                })
 
 
 # --- CLI for quick testing ---
 if __name__ == "__main__":
     agent = ReceptionistAgent()
-    print(f"🏋️ {STUDIO_NAME} Receptionist")
+    print(f"{STUDIO_NAME} Receptionist")
     print("Type 'quit' to exit.\n")
 
     while True:

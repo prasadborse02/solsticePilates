@@ -91,16 +91,12 @@ def get_class_details(event_id: str) -> dict:
 
 
 def book_class(event_id: str, name: str, phone: str) -> dict:
-    """Book a person into a class.
+    """Book a person into a class."""
+    # Reject placeholder names
+    invalid = {"unknown", "n/a", "none", "john doe", "jane doe", "placeholder", ""}
+    if name.lower().strip() in invalid or phone.lower().strip() in invalid:
+        return {"success": False, "message": "Please ask the caller for their real name and phone number before booking."}
 
-    Args:
-        event_id: Google Calendar event ID.
-        name: Caller's name.
-        phone: Caller's phone number.
-
-    Returns:
-        Result dict with success status and message.
-    """
     event = _calendar.events().get(
         calendarId=CALENDAR_ID, eventId=event_id
     ).execute()

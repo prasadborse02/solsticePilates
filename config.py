@@ -11,9 +11,10 @@ CALENDAR_ID = "ed92d2fca5bfdb180f154766465b5f78c822b566d8c125d74b3a8e2171f045b8@
 SPREADSHEET_ID = "1gXAjnwZZP6HEjPL2WuuZqdlURronwJ40bnNM-Jv5Pnw"
 TIMEZONE = "Asia/Kolkata"
 
-# --- Gemini ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-2.0-flash"
+# --- LLM ---
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL_FAST = "llama-3.1-8b-instant"
 
 # --- Studio Info ---
 STUDIO_NAME = "Solstice Pilates"
